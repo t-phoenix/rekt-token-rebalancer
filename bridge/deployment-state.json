@@ -1,0 +1,17 @@
+{
+  "ceoToken": "0x296ad590f077614d951ccc630e763765d1Ef004f",
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "configuration": {
+    "admin": "0x4e39a3aE616a3e7d853ab54D0Ca242188a89Fc80"
+  },
+  "lastUpdate": "2025-12-26T19:23:32.998Z",
+  "uniswapPool": {
+    "pairAddress": "0x0000000000000000000000000000000000000000",
+    "ceoAmount": "56193750000",
+    "usdcAmount": "56193",
+    "targetPrice": "0.000001",
+    "deployedAt": "2025-12-26T19:23:32.998Z",
+    "transactionHash": "0x00dd82c02c17d2314046d5f6a3c9c9d8f33963bae5e14c6fcd22a38866246697",
+    "blockNumber": 39993831
+  }
+}

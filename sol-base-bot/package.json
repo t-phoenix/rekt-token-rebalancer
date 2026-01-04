@@ -1,0 +1,46 @@
+{
+  "name": "arbitrage-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "bot": "tsx src/main.ts",
+    "verify-logic": "tsx src/solana/scripts/verify-logic.ts",
+    "test:balance": "tsx src/solana/scripts/test-balance.ts",
+    "test:pool-info": "tsx src/solana/scripts/test-pool-info.ts",
+    "test:pricing": "tsx src/solana/scripts/test-pricing.ts",
+    "test:token-buy": "tsx src/solana/scripts/test-token-buy.ts",
+    "test:token-sell": "tsx src/solana/scripts/test-token-sell.ts",
+    "test:buy-simulate": "tsx src/solana/scripts/test-buy-simulate.ts",
+    "test:trade-events": "tsx src/solana/scripts/test-trade-event-listener.ts",
+    "test:base-balance": "tsx src/base/scripts/test-get-base-balance.ts",
+    "test:base-pool-info": "tsx src/base/scripts/test-pool-info.ts",
+    "test:base-buy-token": "tsx src/base/scripts/test-buy-token.ts",
+    "test:base-sell-token": "tsx src/base/scripts/test-sell-token.ts",
+    "test:base-swap-events": "tsx src/base/scripts/test-swap-events.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.4",
+    "@types/bn.js": "^5.2.0",
+    "axios": "^1.7.9",
+    "bn.js": "^5.2.2",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4",
+    "uuid": "^9.0.1",
+    "winston": "^3.17.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/bs58": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "@types/uuid": "^9.0.8",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
