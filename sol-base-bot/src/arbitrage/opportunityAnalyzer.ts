@@ -12,60 +12,29 @@ const UNISWAP_FEE_BPS = 30n;  // 0.3%
 const BPS_DENOMINATOR = 10000n;
 
 /**
- * Calculate marginal price on PumpFun (AMM) for a given input of tokens.
- * This is effectively the price at that specific bonding curve point.
- * P = virtual_sol / virtual_tokens
+ * Calculate pool skewness ratio to inform trade size limits.
+ * Returns ratio of larger pool to smaller pool.
+ * Higher ratio = more skewed = allow more aggressive trading on small pool
  */
-function getPumpFunMarginalPrice(
-  virtualSol: bigint,
-  virtualTokens: bigint,
-  amountInTokens: bigint,
-  isBuyOnInternal: boolean // Buy on PumpFun means we put SOL in, take Tokens out.
-): number {
-  // Constant product k = x * y
-  // For marginal price, we can just use current reserves ratio if amount is small, 
-  // but for proper equilibrium search we should use the reserves *after* the trade (or average execution price).
-  // However, "Marginal Price" usually means spot price *after* the trade is executed (the final price).
+function calculatePoolSkewness(
+  solanaLiquidityUsd: number,
+  baseLiquidityUsd: number
+): { ratio: number; smallerPool: 'solana' | 'base' } {
+  const ratio = Math.max(solanaLiquidityUsd, baseLiquidityUsd) / Math.min(solanaLiquidityUsd, baseLiquidityUsd);
+  const smallerPool = solanaLiquidityUsd < baseLiquidityUsd ? 'solana' : 'base';
+  return { ratio, smallerPool };
+}
 
-  let finalVSol = virtualSol;
-  let finalVToken = virtualTokens;
-
-  // We are solving for trade size 'x' (tokens).
-  // If we BUY on PumpFun (SOL in -> Tokens out):
-  //   Tokens removed = amountInTokens
-  //   New VToken = VToken - amountInTokens
-  //   New VSol = k / New VToken
-
-  // If we SELL on PumpFun (Tokens in -> SOL out):
-  //   Tokens added = amountInTokens
-  //   New VToken = VToken + amountInTokens
-  //   New VSol = k / New VToken
-
-  const k = virtualSol * virtualTokens;
-
-  if (isBuyOnInternal) {
-    if (amountInTokens >= virtualTokens) return Infinity; // Impossible
-    finalVToken = virtualTokens - amountInTokens;
-  } else {
-    finalVToken = virtualTokens + amountInTokens;
-  }
-
-  // Avoid division by zero
-  if (finalVToken <= 0n) return Infinity;
-
-  finalVSol = k / finalVToken;
-
-  // Spot Price = Sol / Token
-  const price = Number(finalVSol) / Number(finalVToken);
-
-  // Adjust for fee?
-  // Marginal price viewed by the trader includes the impact of fees.
-  // If buying, price is higher (you pay fee). Effective Price = SpotPrice / (1 - fee) ?
-  // Actually, price impact + fee.
-  // Let's stick to pure AMM Spot Price for equilibrium, and handle fee in the "effective price" seen by arb.
-  // Effective Price = (SOL Out / Token In) or (SOL In / Token Out).
-
-  return price;
+/**
+ * Determine max pool usage based on skewness.
+ * For highly skewed pools (ratio > 100), allow up to 50% usage of small pool.
+ * For moderately skewed (ratio 10-100), allow up to 30%.
+ * For balanced pools (ratio < 10), limit to 20%.
+ */
+function getMaxPoolUsage(skewnessRatio: number): number {
+  if (skewnessRatio > 100) return 0.50; // 50% for highly skewed
+  if (skewnessRatio > 10) return 0.30;  // 30% for moderately skewed
+  return 0.20; // 20% for balanced pools
 }
 
 /**
@@ -121,36 +90,6 @@ function getPumpFunEffectivePrice(
   }
 
   return Number(solAmount) / Number(amountTokens); // Returns SOL per Token (raw units ratio)
-}
-
-/**
- * Calculate marginal price on Uniswap V2 (Base).
- * P = usdc_res / token_res (after trade impact)
- */
-function getUniswapV2MarginalPrice(
-  usdcReserves: bigint,
-  tokenReserves: bigint,
-  amountTokens: bigint,
-  isBuy: boolean // Buy = Buy Tokens (USDC In, Tokens Out)
-): number {
-  const k = usdcReserves * tokenReserves;
-  let newUsdcRes: bigint;
-  let newTokenRes: bigint;
-
-  if (isBuy) {
-    // Buy Tokens: Tokens Out.
-    if (amountTokens >= tokenReserves) return Infinity;
-    newTokenRes = tokenReserves - amountTokens;
-  } else {
-    // Sell Tokens: Tokens In.
-    newTokenRes = tokenReserves + amountTokens;
-  }
-
-  // new_usdc = k / new_token
-  newUsdcRes = k / newTokenRes;
-
-  // Price = USDC / Token
-  return Number(newUsdcRes) / Number(newTokenRes);
 }
 
 /**
@@ -286,14 +225,37 @@ function calculatePostArbitrageState(
   // Convert to USD: normalize decimals and multiply by SOL price
   // Convert: (lamports/raw_token) × (SOL/lamport) × (USD/SOL) × (raw_token/token)
   //         = (lamports/raw_token) × (1/10^9) × solPriceUsd × (10^solDecimals)
-  const priceSolUsd = (priceSolNative * solPriceUsd * (10 ** solDecimals)) / 1e9;
+  const priceSolUsdBase = (priceSolNative * solPriceUsd * (10 ** solDecimals)) / 1e9;
 
   // Base: (raw_usdc / raw_token)
   const priceBaseNative = Number(newBaseUsdc) / Number(newBaseToken);
   // Convert to USD: normalize decimals
   // Convert: (raw_usdc/raw_token) × (USDC/raw_usdc) × (raw_token/token)
   //         = (raw_usdc/raw_token) × (1/10^usdcDec) × (10^baseDec)
-  const priceBaseUsd = (priceBaseNative * (10 ** baseDecimals)) / (10 ** baseReserves.usdcDecimals);
+  const priceBaseUsdBase = (priceBaseNative * (10 ** baseDecimals)) / (10 ** baseReserves.usdcDecimals);
+
+  // Adjust for trading fees based on direction
+  // The effective price for equilibrium calculation should account for fees
+  // When buying on Solana and selling on Base:
+  //   - Solana buy costs 1% more (price effectively higher for buyer)
+  //   - Base sell gets 0.3% less (price effectively lower for seller)
+  // When buying on Base and selling on Solana:
+  //   - Base buy costs 0.3% more (price effectively higher for buyer)
+  //   - Solana sell gets 1% less (price effectively lower for seller)
+  let priceSolUsd: number;
+  let priceBaseUsd: number;
+
+  if (direction === 'SOLANA_TO_BASE') {
+    // Buying on Solana: add 1% fee to effective price
+    priceSolUsd = priceSolUsdBase * (1 + Number(PUMPFUN_FEE_BPS) / Number(BPS_DENOMINATOR));
+    // Selling on Base: subtract 0.3% fee from effective price
+    priceBaseUsd = priceBaseUsdBase * (1 - Number(UNISWAP_FEE_BPS) / Number(BPS_DENOMINATOR));
+  } else {
+    // Buying on Base: add 0.3% fee to effective price
+    priceBaseUsd = priceBaseUsdBase * (1 + Number(UNISWAP_FEE_BPS) / Number(BPS_DENOMINATOR));
+    // Selling on Solana: subtract 1% fee from effective price
+    priceSolUsd = priceSolUsdBase * (1 - Number(PUMPFUN_FEE_BPS) / Number(BPS_DENOMINATOR));
+  }
 
   return {
     solana: { priceSolPerToken: priceSolNative, priceUsd: priceSolUsd },
@@ -325,9 +287,22 @@ function findEquilibriumTradeSize(
   // Determine max trade constraints
   const maxTradeSizeUsd = config.TRADE_SIZE_USD;
 
-  // Calculate max tokens based on reserves (increase to 80% to allow equilibrium to be reached)
-  const maxTokensPumpFun = (marketStats.solana.virtualTokenReserves * 80n) / 100n;
-  const maxTokensBase = (marketStats.base.tokenReserves * 80n) / 100n;
+  // Calculate pool liquidity in USD
+  const solanaLiquidityUsd = (Number(marketStats.solana.virtualSolReserves) / 1e9) * config.SOLANA_SOL_PRICE_USD;
+  const baseLiquidityUsd = Number(marketStats.base.usdcReserves) / 1e6;
+
+  // Analyze pool skewness to determine appropriate trade limits
+  const skewness = calculatePoolSkewness(solanaLiquidityUsd, baseLiquidityUsd);
+  const maxPoolUsage = getMaxPoolUsage(skewness.ratio);
+
+  // Calculate max tokens based on skewness-aware limits
+  // For the SMALLER pool, we use maxPoolUsage (20-50% based on skewness)
+  // For the LARGER pool, use conservative 20% (it won't be the limiting factor)
+  const maxTokensPumpFunPercent = skewness.smallerPool === 'solana' ? maxPoolUsage : 0.20;
+  const maxTokensBasePercent = skewness.smallerPool === 'base' ? maxPoolUsage : 0.20;
+
+  const maxTokensPumpFun = BigInt(Math.floor(Number(marketStats.solana.virtualTokenReserves) * maxTokensPumpFunPercent));
+  const maxTokensBase = BigInt(Math.floor(Number(marketStats.base.tokenReserves) * maxTokensBasePercent));
 
   // Normalize to same decimals for comparison
   const maxTokensBaseInSolDec = (maxTokensBase * (10n ** BigInt(solDecimals))) / (10n ** BigInt(baseDecimals));
@@ -351,7 +326,13 @@ function findEquilibriumTradeSize(
   console.log(`[EQUILIBRIUM] ========================================`);
   console.log(`[EQUILIBRIUM] Starting equilibrium search`);
   console.log(`[EQUILIBRIUM] Direction: ${direction}`);
+  console.log(`[EQUILIBRIUM] Pool Liquidity - Solana: $${solanaLiquidityUsd.toFixed(2)}, Base: $${baseLiquidityUsd.toFixed(2)}`);
+  console.log(`[EQUILIBRIUM] Pool Skewness: ${skewness.ratio.toFixed(1)}x (${skewness.smallerPool} is smaller)`);
+  console.log(`[EQUILIBRIUM] Max Pool Usage: ${(maxPoolUsage * 100).toFixed(0)}% (adaptive based on skewness)`);
   console.log(`[EQUILIBRIUM] Search range: 0 to ${high} (${(Number(high) / (10 ** solDecimals)).toFixed(2)} tokens)`);
+  const limitingPool = maxTokensPumpFun < maxTokensBaseInSolDec ? 'Solana' : 'Base';
+  const limitingPercent = maxTokensPumpFun < maxTokensBaseInSolDec ? maxTokensPumpFunPercent : maxTokensBasePercent;
+  console.log(`[EQUILIBRIUM] Limited by ${limitingPool} pool at ${(limitingPercent * 100).toFixed(0)}% usage`);
   console.log(`[EQUILIBRIUM] Initial Solana: $${marketStats.solana.priceUsd.toFixed(8)} (${Number(marketStats.solana.virtualSolReserves) / 1e9} SOL, ${Number(marketStats.solana.virtualTokenReserves) / (10 ** solDecimals)} tokens)`);
   console.log(`[EQUILIBRIUM] Initial Base: $${marketStats.base.priceUsd.toFixed(8)} (${Number(marketStats.base.usdcReserves) / 1e6} USDC, ${Number(marketStats.base.tokenReserves) / (10 ** baseDecimals)} tokens)`);
   console.log(`[EQUILIBRIUM] ========================================`);

@@ -13,6 +13,7 @@ const configSchema = z.object({
 
   MIN_PROFIT_THRESHOLD: z.coerce.number().min(0).max(1).default(0.02),
   TRADE_SIZE_USD: z.coerce.number().positive().default(100),
+  MIN_LIQUIDITY_USD: z.coerce.number().min(0).default(0),
 
   SOLANA_RPC_HTTP_URL: z.string().url(),
   SOLANA_PRIVATE_KEY: z.string().default(''),
