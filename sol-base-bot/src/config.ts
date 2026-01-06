@@ -38,6 +38,14 @@ const configSchema = z.object({
   BASE_SWAP_DEADLINE_SECONDS: z.coerce.number().int().positive().default(30),
 
   COINMARKETCAP_API_KEY: z.string().default(''),
+
+  // Event Monitoring Configuration
+  PRICE_MOVEMENT_THRESHOLD: z.coerce.number().min(0).max(100).default(2.0),
+  AUTO_EXECUTE_TRADES: z.coerce.boolean().default(true),
+  SERVER_PORT: z.coerce.number().int().positive().default(3000),
+  ANALYSIS_COOLDOWN_MS: z.coerce.number().int().min(0).default(5000),
+  EVENT_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
+  LOG_ALL_EVENTS: z.coerce.boolean().default(false),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

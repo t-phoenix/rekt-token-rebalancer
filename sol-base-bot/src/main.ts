@@ -1,23 +1,13 @@
 import 'dotenv/config';
 import { loadConfig } from './config.js';
-import { Connection, Keypair, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { JsonRpcProvider, Wallet } from 'ethers';
-import { createConnection, getKeyPairFromPrivateKey } from './solana/utils.js';
+import { createConnection } from './solana/utils.js';
 import { createBaseProvider } from './base/baseBalanceUtils.js';
+import { runArbitrageAnalysis } from './arbitrageHandler.js';
 import { createReadlineInterface, promptConfirmation } from './utils/cliUtils.js';
 import { printHeader, printFooter, logError, handleTestError } from './utils/testHelpers.js';
-import { fetchMarketData } from './arbitrage/marketFetcher.js';
-import { fetchWalletStats } from './arbitrage/walletStats.js';
-import { analyzeOpportunity } from './arbitrage/opportunityAnalyzer.js';
-import { simulateArbitrage } from './arbitrage/simulator.js';
-import { executeArbitrage } from './arbitrage/executor.js';
-import { displayMarketStats, displayWalletStats, displayOpportunity, displaySimulationResults } from './arbitrage/display.js';
-import { initializePriceFetcher } from './utils/priceFetcher.js';
-import type { Opportunity, ArbitrageSimulation } from './arbitrage/types.js';
-
 
 /**
- * Main arbitrage bot entry point
+ * Main arbitrage bot entry point - CLI mode with user confirmation
  */
 async function main() {
   const config = loadConfig();
@@ -44,112 +34,28 @@ async function main() {
     console.log(`   Min Profit Threshold: ${(config.MIN_PROFIT_THRESHOLD * 100).toFixed(2)}%`);
     console.log(`   Max Trade Size: $${config.TRADE_SIZE_USD}\n`);
 
-    // Setup connections and wallets
+    // Setup connections
     console.log('🔧 Setting up connections...');
     const solanaConnection = createConnection(config.SOLANA_RPC_HTTP_URL);
     const baseProvider = createBaseProvider(config.BASE_RPC_HTTP_URL);
-
-    let solanaKeypair: Keypair | null = null;
-    let baseWallet: Wallet | null = null;
-
-    if (config.SOLANA_PRIVATE_KEY) {
-      solanaKeypair = getKeyPairFromPrivateKey(config.SOLANA_PRIVATE_KEY);
-      console.log(`   Solana Wallet: ${solanaKeypair.publicKey.toBase58()}`);
-    }
-
-    if (config.BASE_PRIVATE_KEY_HEX) {
-      baseWallet = new Wallet(config.BASE_PRIVATE_KEY_HEX, baseProvider);
-      console.log(`   Base Wallet: ${baseWallet.address}`);
-    }
-
     console.log('');
 
-    // Initialize price fetcher if API key is provided
-    if (config.COINMARKETCAP_API_KEY) {
-      try {
-        initializePriceFetcher(config.COINMARKETCAP_API_KEY);
-        console.log('✅ Price fetcher initialized (CoinMarketCap)\n');
-      } catch (error) {
-        console.warn('⚠️  Failed to initialize price fetcher:', error);
-        console.warn('   Using fallback prices from config\n');
-      }
-    }
-
-    // Fetch market data
-    console.log('📊 Fetching market data from both chains...\n');
-    const marketStats = await fetchMarketData(
+    // Run analysis (without auto-execution for CLI mode)
+    const result = await runArbitrageAnalysis(
       config,
       solanaConnection,
       baseProvider,
-      solanaKeypair
+      false  // Disable auto-execution for CLI mode
     );
 
-    if (!marketStats) {
-      throw new Error('Failed to fetch market data');
-    }
-
-    // Display market stats
-    displayMarketStats(marketStats, config);
-
-    // Fetch wallet balances
-    console.log('\n💰 Fetching wallet balances...\n');
-    const walletStats = await fetchWalletStats(
-      config,
-      solanaConnection,
-      baseProvider,
-      solanaKeypair,
-      baseWallet,
-      marketStats
-    );
-
-    if (!walletStats) {
-      console.warn('⚠️  Could not fetch wallet balances. Continuing with simulation...\n');
-    } else {
-      displayWalletStats(walletStats, marketStats);
-    }
-
-    // Analyze arbitrage opportunity
-    console.log('\n🔍 Analyzing arbitrage opportunity...\n');
-    const opportunity = await analyzeOpportunity(
-      config,
-      marketStats,
-      walletStats,
-      baseProvider
-    );
-
-    if (!opportunity) {
+    if (!result) {
       console.log('❌ No profitable arbitrage opportunity found.\n');
       printFooter('✅ Analysis Complete');
       rl.close();
       process.exit(0);
     }
 
-    // Display opportunity
-    displayOpportunity(opportunity, config, marketStats);
-
-    // Simulate transactions
-    console.log('\n🧪 Simulating transactions on both chains...\n');
-    const simulation = await simulateArbitrage(
-      config,
-      opportunity,
-      solanaConnection,
-      baseProvider,
-      solanaKeypair,
-      baseWallet
-    );
-
-    if (!simulation || !simulation.success) {
-      console.log('❌ Simulation failed or not profitable.\n');
-      if (simulation?.failureReason) {
-        console.log(`   Reason: ${simulation.failureReason}\n`);
-      }
-      printFooter('✅ Analysis Complete');
-      rl.close();
-      process.exit(0);
-    }
-
-    // Display simulation results
-    displaySimulationResults(simulation, config);
+    const { opportunity, simulation } = result;
 
     // Ask for user confirmation
     console.log('\n' + '='.repeat(80));
@@ -167,20 +73,13 @@ async function main() {
       process.exit(0);
     }
 
-    // Execute trades
-    if (!solanaKeypair || !baseWallet) {
-      throw new Error('Private keys required to execute trades');
-    }
-
+    // Execute with auto-execution enabled
     console.log('\n📤 Executing trades...\n');
-    await executeArbitrage(
+    await runArbitrageAnalysis(
       config,
-      opportunity,
-      simulation,
       solanaConnection,
       baseProvider,
-      solanaKeypair,
-      baseWallet
+      true  // Enable auto-execution
     );
 
     printFooter('✅ Arbitrage Trade Executed Successfully');
