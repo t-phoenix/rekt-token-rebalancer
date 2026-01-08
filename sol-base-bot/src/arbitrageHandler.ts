@@ -14,7 +14,7 @@ import { analyzeOpportunity } from './arbitrage/opportunityAnalyzer.js';
 import { simulateArbitrage } from './arbitrage/simulator.js';
 import { executeArbitrage } from './arbitrage/executor.js';
 import { displayMarketStats, displayWalletStats, displayOpportunity, displaySimulationResults } from './arbitrage/display.js';
-import { initializePriceFetcher } from './utils/priceFetcher.js';
+import { initializePriceFetcher, PriceFetcher } from './utils/priceFetcher.js';
 import { getNotificationService } from './monitoring/notifications.js';
 import type { AppConfig } from './config.js';
 
@@ -25,13 +25,15 @@ import type { AppConfig } from './config.js';
  * @param solanaConnection - Solana RPC connection
  * @param baseProvider - Base chain RPC provider
  * @param autoExecute - Whether to automatically execute profitable trades (default: from config)
+ * @param priceFetcher - Optional shared PriceFetcher instance for live pricing (if not provided, creates one if API key is configured)
  * @returns Execution result or null if no opportunity found
  */
 export async function runArbitrageAnalysis(
     config: AppConfig,
     solanaConnection: Connection,
     baseProvider: JsonRpcProvider,
-    autoExecute?: boolean
+    autoExecute?: boolean,
+    priceFetcher?: PriceFetcher | null
 ): Promise<any> {
 
     const shouldAutoExecute = autoExecute ?? config.AUTO_EXECUTE_TRADES;
@@ -50,10 +52,10 @@ export async function runArbitrageAnalysis(
             baseWallet = new Wallet(config.BASE_PRIVATE_KEY_HEX, baseProvider);
         }
 
-        // Initialize price fetcher if API key is provided
-        if (config.COINMARKETCAP_API_KEY) {
+        // Initialize price fetcher if not provided and API key is available
+        if (!priceFetcher && config.COINMARKETCAP_API_KEY) {
             try {
-                initializePriceFetcher(config.COINMARKETCAP_API_KEY);
+                priceFetcher = initializePriceFetcher(config.COINMARKETCAP_API_KEY);
             } catch (error) {
                 console.warn('⚠️  Failed to initialize price fetcher:', error);
             }

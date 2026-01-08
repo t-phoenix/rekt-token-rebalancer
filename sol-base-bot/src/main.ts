@@ -3,6 +3,7 @@ import { loadConfig } from './config.js';
 import { createConnection } from './solana/utils.js';
 import { createBaseProvider } from './base/baseBalanceUtils.js';
 import { runArbitrageAnalysis } from './arbitrageHandler.js';
+import { initializePriceFetcher, PriceFetcher } from './utils/priceFetcher.js';
 import { createReadlineInterface, promptConfirmation } from './utils/cliUtils.js';
 import { printHeader, printFooter, logError, handleTestError } from './utils/testHelpers.js';
 
@@ -38,6 +39,21 @@ async function main() {
     console.log('🔧 Setting up connections...');
     const solanaConnection = createConnection(config.SOLANA_RPC_HTTP_URL);
     const baseProvider = createBaseProvider(config.BASE_RPC_HTTP_URL);
+
+    // Initialize SOL price fetcher if API key is configured
+    let priceFetcher: PriceFetcher | null = null;
+    if (config.COINMARKETCAP_API_KEY) {
+      try {
+        priceFetcher = initializePriceFetcher(config.COINMARKETCAP_API_KEY);
+        const solPrice = await priceFetcher.getSolPrice();
+        console.log(`💰 Fetched live SOL price: $${solPrice.toFixed(2)}`);
+      } catch (error) {
+        console.warn('⚠️  Failed to fetch SOL price:', error);
+        console.warn('   Continuing with static pricing');
+      }
+    } else {
+      console.warn('⚠️  COINMARKETCAP_API_KEY not configured, using static pricing');
+    }
     console.log('');
 
     // Run analysis (without auto-execution for CLI mode)
@@ -45,7 +61,8 @@ async function main() {
       config,
       solanaConnection,
       baseProvider,
-      false  // Disable auto-execution for CLI mode
+      false,  // Disable auto-execution for CLI mode
+      priceFetcher  // Pass price fetcher for live pricing
     );
 
     if (!result) {
@@ -79,7 +96,8 @@ async function main() {
       config,
       solanaConnection,
       baseProvider,
-      true  // Enable auto-execution
+      true,  // Enable auto-execution
+      priceFetcher  // Pass price fetcher for live pricing
     );
 
     printFooter('✅ Arbitrage Trade Executed Successfully');

@@ -13,11 +13,14 @@ import { createConnection } from './solana/utils.js';
 import { createBaseProvider } from './base/baseBalanceUtils.js';
 import { EventCoordinator } from './monitoring/eventCoordinator.js';
 import { runArbitrageAnalysis } from './arbitrageHandler.js';
+import { initializePriceFetcher, PriceFetcher } from './utils/priceFetcher.js';
 import type { PriceChangeEvent } from './monitoring/priceTracker.js';
 
 const app = express();
 
 let eventCoordinator: EventCoordinator | null = null;
+let priceFetcher: PriceFetcher | null = null;
+let priceRefreshInterval: NodeJS.Timeout | null = null;
 let isStarted = false;
 
 /**
@@ -81,11 +84,38 @@ async function startMonitoring() {
     // Register arbitrage trigger callback
     eventCoordinator.onArbitrageTrigger(async (event: PriceChangeEvent) => {
         try {
-            await runArbitrageAnalysis(config, solanaConnection, baseProvider);
+            await runArbitrageAnalysis(config, solanaConnection, baseProvider, undefined, priceFetcher);
         } catch (error) {
             console.error('❌ Error running arbitrage analysis:', error);
         }
     });
+
+    // Initialize SOL price fetcher if API key is configured
+    if (config.COINMARKETCAP_API_KEY) {
+        try {
+            priceFetcher = initializePriceFetcher(config.COINMARKETCAP_API_KEY);
+            const initialPrice = await priceFetcher.getSolPrice();
+            console.log(`💰 Initialized SOL price fetcher: $${initialPrice.toFixed(2)}`);
+
+            // Set up periodic price refresh (every 5 minutes)
+            priceRefreshInterval = setInterval(async () => {
+                try {
+                    const newPrice = await priceFetcher!.getSolPrice();
+                    console.log(`🔄 SOL price refreshed: $${newPrice.toFixed(2)}`);
+                } catch (error) {
+                    console.warn('⚠️  Failed to refresh SOL price:', error);
+                }
+            }, 5 * 60 * 1000); // 5 minutes
+
+            console.log('   🔄 Price auto-refresh: Every 5 minutes\n');
+        } catch (error) {
+            console.warn('⚠️  Failed to initialize price fetcher:', error);
+            console.warn('   Continuing without live SOL pricing\n');
+        }
+    } else {
+        console.warn('⚠️  COINMARKETCAP_API_KEY not configured');
+        console.warn('   Arbitrage bot will use static pricing\n');
+    }
 
     // Start monitoring
     await eventCoordinator.start();
@@ -103,8 +133,21 @@ function stopMonitoring() {
         return;
     }
 
+    // Stop event monitoring
     eventCoordinator.stop();
     eventCoordinator = null;
+
+    // Clean up price refresh interval
+    if (priceRefreshInterval) {
+        clearInterval(priceRefreshInterval);
+        priceRefreshInterval = null;
+    }
+
+    // Clean up price fetcher
+    if (priceFetcher) {
+        priceFetcher = null;
+    }
+
     isStarted = false;
     console.log('✅ Monitoring stopped\n');
 }
@@ -159,7 +202,7 @@ app.post('/trigger-analysis', async (req, res) => {
     const baseProvider = createBaseProvider(config.BASE_RPC_HTTP_URL);
 
     try {
-        await runArbitrageAnalysis(config, solanaConnection, baseProvider);
+        await runArbitrageAnalysis(config, solanaConnection, baseProvider, undefined, priceFetcher);
         res.json({
             message: 'Analysis triggered successfully',
             timestamp: new Date().toISOString()
