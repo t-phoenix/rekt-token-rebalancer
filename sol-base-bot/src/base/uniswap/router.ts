@@ -111,7 +111,7 @@ export async function getTokenDecimals(
   try {
     const tokenContract = new Contract(tokenAddress, erc20Abi, provider);
     const decimals = await tokenContract.decimals();
-    return decimals;
+    return Number(decimals);
   } catch (err) {
     throw new Error(
       `Failed to get token decimals: ${err instanceof Error ? err.message : String(err)}`

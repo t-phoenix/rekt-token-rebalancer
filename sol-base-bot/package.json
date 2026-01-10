@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "bot": "tsx src/server.ts",
     "bot:once": "tsx src/main.ts",
+    "base-volume-bot": "tsx src/baseVolumeBot.ts",
     "volume-bot": "tsx src/solanaVolumeBot.ts",
     "verify-logic": "tsx src/solana/scripts/verify-logic.ts",
     "test:balance": "tsx src/solana/scripts/test-balance.ts",
